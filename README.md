@@ -172,6 +172,7 @@ Worker 接受以下 GET 参数：
 ## worker.js
 
 > 仓库根目录 `worker.js` 的完整内容。点击下方折叠块展开，即可滚动阅读。
+> 在线滚动阅读版（固定高度滚动窗）：**[poying2018.github.io/ocs-ai-proxy](https://poying2018.github.io/ocs-ai-proxy/)**
 
 <details>
 <summary>展开 / 收起 worker.js 完整源码</summary>
