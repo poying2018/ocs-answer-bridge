@@ -1,0 +1,9 @@
+[
+  {
+    "name": "AI 答题",
+    "url": "https://<YOUR_DOMAIN>/?key=<YOUR_AUTH_KEY>&title=${title}&options=${options}",
+    "method": "get",
+    "type": "fetch",
+    "handler": "return (res)=> res.answer ? [undefined, res.answer] : undefined"
+  }
+]

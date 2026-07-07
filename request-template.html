@@ -1,0 +1,349 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>OCS AI Proxy · 网页端请求模板</title>
+<style>
+  :root {
+    --bg: #f5f6f8;
+    --card: #ffffff;
+    --border: #e3e6eb;
+    --text: #1f2329;
+    --muted: #6b7280;
+    --primary: #2563eb;
+    --primary-hover: #1d4ed8;
+    --cache: #16a34a;
+    --ai: #2563eb;
+    --error: #dc2626;
+    --code-bg: #f3f4f6;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.5;
+  }
+  header {
+    padding: 24px 20px 8px;
+    max-width: 880px;
+    margin: 0 auto;
+  }
+  header h1 { font-size: 20px; margin: 0 0 4px; }
+  header p { color: var(--muted); margin: 0; font-size: 13px; }
+  main {
+    max-width: 880px;
+    margin: 0 auto;
+    padding: 12px 20px 40px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px 18px;
+  }
+  .card h2 {
+    font-size: 14px;
+    margin: 0 0 12px;
+    color: var(--muted);
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: .03em;
+  }
+  label {
+    display: block;
+    font-size: 13px;
+    font-weight: 500;
+    margin-bottom: 10px;
+  }
+  label .req { color: var(--error); }
+  input, textarea {
+    width: 100%;
+    margin-top: 5px;
+    padding: 9px 11px;
+    font-size: 14px;
+    font-family: inherit;
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    background: #fff;
+    color: var(--text);
+    resize: vertical;
+  }
+  input:focus, textarea:focus {
+    outline: none;
+    border-color: var(--primary);
+    box-shadow: 0 0 0 3px rgba(37,99,235,.12);
+  }
+  textarea { min-height: 76px; line-height: 1.5; }
+  .url-box {
+    display: flex;
+    gap: 8px;
+    align-items: stretch;
+  }
+  .url-box code {
+    flex: 1;
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    padding: 9px 11px;
+    font-size: 12.5px;
+    word-break: break-all;
+    font-family: "SFMono-Regular", Consolas, monospace;
+    color: #374151;
+    overflow-x: auto;
+    white-space: pre-wrap;
+  }
+  button {
+    cursor: pointer;
+    font-size: 13.5px;
+    border-radius: 7px;
+    border: 1px solid var(--border);
+    background: #fff;
+    color: var(--text);
+    padding: 9px 14px;
+    transition: all .15s;
+    white-space: nowrap;
+  }
+  button:hover { border-color: var(--primary); color: var(--primary); }
+  button.primary {
+    background: var(--primary);
+    border-color: var(--primary);
+    color: #fff;
+    font-weight: 600;
+  }
+  button.primary:hover { background: var(--primary-hover); color: #fff; }
+  .actions { display: flex; gap: 8px; margin-top: 14px; flex-wrap: wrap; }
+  .result {
+    font-size: 14px;
+    min-height: 60px;
+  }
+  .result .placeholder { color: var(--muted); }
+  .answer-block {
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px 14px;
+    margin-bottom: 12px;
+    white-space: pre-wrap;
+    word-break: break-word;
+    font-size: 14.5px;
+    line-height: 1.6;
+  }
+  .meta {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+    align-items: center;
+    font-size: 12.5px;
+    color: var(--muted);
+    margin-bottom: 10px;
+  }
+  .badge {
+    padding: 2px 9px;
+    border-radius: 20px;
+    font-size: 12px;
+    font-weight: 600;
+    color: #fff;
+  }
+  .badge.cache { background: var(--cache); }
+  .badge.ai { background: var(--ai); }
+  .badge.err { background: var(--error); }
+  .raw {
+    margin-top: 8px;
+    font-size: 12px;
+    color: var(--muted);
+  }
+  .raw summary { cursor: pointer; }
+  .raw pre {
+    background: #0f172a;
+    color: #e2e8f0;
+    padding: 12px 14px;
+    border-radius: 8px;
+    overflow-x: auto;
+    font-size: 12px;
+    margin-top: 8px;
+  }
+  .err-box {
+    background: #fef2f2;
+    border: 1px solid #fecaca;
+    color: var(--error);
+    border-radius: 8px;
+    padding: 12px 14px;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .tip { font-size: 12px; color: var(--muted); margin-top: 6px; }
+  .row { display: flex; gap: 12px; }
+  .row > label { flex: 1; }
+</style>
+</head>
+<body>
+  <header>
+    <h1>OCS AI Proxy · 网页端请求模板</h1>
+    <p>向部署在 Cloudflare Worker 的答题代理发起请求，可查看缓存命中状态、健康检查与缓存统计。</p>
+  </header>
+
+  <main>
+    <!-- 配置 -->
+    <section class="card">
+      <h2>连接配置</h2>
+      <div class="row">
+        <label>API 地址 (Base URL)
+          <input id="baseUrl" value="https://your-worker.example.com" placeholder="https://your-worker.workers.dev" />
+        </label>
+        <label>鉴权 Key
+          <input id="key" value="" placeholder="与 Worker 的 AUTH_KEY 一致" />
+        </label>
+      </div>
+      <p class="tip">Key 为 Worker 端 <code>AUTH_KEY</code> 环境变量值，用于身份校验；留空则当 Worker 未配置 AUTH_KEY 时放行。</p>
+    </section>
+
+    <!-- 请求参数 -->
+    <section class="card">
+      <h2>请求参数</h2>
+      <label>题目 (title) <span class="req">*</span>
+        <input id="title" placeholder="例如：以下哪些属于可再生能源？" />
+      </label>
+      <label>选项 (options，可留空)
+        <textarea id="options" placeholder="A. 太阳能&#10;B. 风能&#10;C. 煤炭&#10;D. 核能"></textarea>
+      </label>
+      <p class="tip">options 留空表示纯问答题；填写后将拼接为「题目 + 选项」一并提交给模型。</p>
+    </section>
+
+    <!-- URL 预览 + 操作 -->
+    <section class="card">
+      <h2>请求 URL 预览</h2>
+      <div class="url-box">
+        <code id="urlPreview">— 填写题目后自动生成 —</code>
+        <button id="copyUrl">复制</button>
+      </div>
+      <div class="actions">
+        <button id="send" class="primary">发送请求</button>
+        <button id="health">健康检查</button>
+        <button id="stats">缓存统计</button>
+      </div>
+      <p class="tip">此 URL 可直接用于 OCS 客户端配置（替换其中的 title / options 变量占位符）。</p>
+    </section>
+
+    <!-- 响应 -->
+    <section class="card">
+      <h2>响应结果</h2>
+      <div id="result" class="result"><span class="placeholder">等待请求…</span></div>
+    </section>
+  </main>
+
+<script>
+  const $ = (id) => document.getElementById(id)
+  const baseUrl = $('baseUrl'), key = $('key'), title = $('title'), options = $('options')
+  const result = $('result'), urlPreview = $('urlPreview')
+
+  function buildUrl(path = '', extra = {}) {
+    const base = (baseUrl.value.trim() || '').replace(/\/+$/, '')
+    if (!base) return ''
+    const u = new URL(base + path)
+    if (key.value.trim()) u.searchParams.set('key', key.value.trim())
+    for (const [k, v] of Object.entries(extra)) {
+      if (v) u.searchParams.set(k, v)
+    }
+    return u.toString()
+  }
+
+  function updatePreview() {
+    const u = buildUrl('', {
+      title: title.value.trim(),
+      options: options.value.trim(),
+    })
+    urlPreview.textContent = u || '— 请先填写 API 地址 —'
+  }
+
+  function setLoading(text) {
+    result.innerHTML = '<span class="placeholder">' + text + '</span>'
+  }
+
+  function showError(msg) {
+    result.innerHTML = '<div class="err-box">⚠ ' + msg + '</div>'
+  }
+
+  function showAnswer(data, source, ms) {
+    const badgeCls = source === 'cache' ? 'cache' : (source === 'ai' ? 'ai' : 'err')
+    const badgeTxt = source === 'cache' ? '命中缓存' : (source === 'ai' ? '模型生成' : source)
+    let html = ''
+    if (data.answer !== undefined) {
+      html += '<div class="answer-block">' + escapeHtml(String(data.answer)) + '</div>'
+    }
+    html += '<div class="meta">'
+    if (source) html += '<span class="badge ' + badgeCls + '">' + badgeTxt + '</span>'
+    if (ms != null) html += '<span>耗时 ' + ms + ' ms</span>'
+    html += '</div>'
+    html += '<details class="raw"><summary>查看原始 JSON</summary><pre>' +
+            escapeHtml(JSON.stringify(data, null, 2)) + '</pre></details>'
+    result.innerHTML = html
+  }
+
+  function escapeHtml(s) {
+    return s.replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]))
+  }
+
+  async function doFetch(url, isJsonView) {
+    const t0 = performance.now()
+    try {
+      const resp = await fetch(url, { method: 'GET', headers: { 'Accept': 'application/json' } })
+      const ms = Math.round(performance.now() - t0)
+      let data
+      try { data = await resp.json() }
+      catch (e) { data = { raw: await resp.text() } }
+      if (!resp.ok) {
+        showError('HTTP ' + resp.status + '\n' + (data.error ? ('错误: ' + data.error) : JSON.stringify(data)))
+        return
+      }
+      if (isJsonView) {
+        showAnswer(data, data.source || (data.status ? 'ok' : ''), ms)
+      } else {
+        showAnswer(data, data.source, ms)
+      }
+    } catch (e) {
+      showError('请求失败: ' + e.message + '\n可能是网络问题、地址不可达或浏览器跨域被拦截。')
+    }
+  }
+
+  // 事件绑定
+  ;[baseUrl, key, title, options].forEach(el => el.addEventListener('input', updatePreview))
+  updatePreview()
+
+  $('send').addEventListener('click', () => {
+    const u = buildUrl('', { title: title.value.trim(), options: options.value.trim() })
+    if (!baseUrl.value.trim()) return showError('请填写 API 地址')
+    if (!title.value.trim()) return showError('题目 (title) 为必填项')
+    setLoading('请求中…')
+    doFetch(u, false)
+  })
+
+  $('copyUrl').addEventListener('click', async () => {
+    try {
+      await navigator.clipboard.writeText(urlPreview.textContent)
+      $('copyUrl').textContent = '已复制'
+      setTimeout(() => $('copyUrl').textContent = '复制', 1500)
+    } catch (e) { showError('复制失败: ' + e.message) }
+  })
+
+  $('health').addEventListener('click', () => {
+    const u = buildUrl('/health')
+    if (!u) return showError('请填写 API 地址')
+    setLoading('健康检查中…')
+    doFetch(u, true)
+  })
+
+  $('stats').addEventListener('click', () => {
+    const u = buildUrl('/stats')
+    if (!u) return showError('请填写 API 地址')
+    setLoading('查询缓存统计中…')
+    doFetch(u, true)
+  })
+</script>
+</body>
+</html>
