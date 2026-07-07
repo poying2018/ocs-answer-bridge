@@ -1,4 +1,4 @@
-# OCS AI Proxy 自动部署脚本 (PowerShell)
+# OCS Answer Bridge 自动部署脚本 (PowerShell)
 # 用法: .\deploy.ps1 -CFToken "你的Cloudflare_API_Token" [-ApiKey "你的AI_API_Key"] [-AuthKey "你的AUTH_KEY"]
 param(
     [Parameter(Mandatory=$true)]
@@ -14,14 +14,19 @@ $ProjectDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 Push-Location $ProjectDir
 
 Write-Host "========================================" -ForegroundColor Cyan
-Write-Host " OCS AI Proxy 部署" -ForegroundColor Cyan
+Write-Host " OCS Answer Bridge 部署" -ForegroundColor Cyan
 Write-Host "========================================" -ForegroundColor Cyan
 
-# 1. 初始化 D1 表
+# 1. 初始化 D1 表 + 迁移（为旧库补充 cache_version 列）
 Write-Host "[1/4] 初始化 D1 数据库表..." -ForegroundColor Yellow
 wrangler d1 execute ocs --remote --file=schema.sql
 if ($LASTEXITCODE -ne 0) {
     Write-Warning "表初始化失败或已存在，继续执行..."
+}
+Write-Host "[1/4] 迁移：为已有表补充 cache_version 列（若已存在则忽略）..." -ForegroundColor Yellow
+wrangler d1 execute ocs --remote --command="ALTER TABLE answers ADD COLUMN IF NOT EXISTS cache_version TEXT NOT NULL DEFAULT '1'" 2>$null
+if ($LASTEXITCODE -ne 0) {
+    Write-Warning "cache_version 列迁移跳过（可能已存在或非必要），继续执行..."
 }
 
 # 2. 设置 AUTH_KEY

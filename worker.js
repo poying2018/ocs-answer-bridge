@@ -1,6 +1,7 @@
-// OCS AI Proxy — Cloudflare Worker
+// OCS Answer Bridge — Cloudflare Worker
 // 功能：接收 OCS 答题请求 → 先查 D1 题库缓存 → 命中则返回，未命中则调用 AI 并写入缓存
 // 部署：wrangler deploy（wrangler.toml 已声明 D1 绑定，部署时自动绑定）
+// 缓存版本：CACHE_VERSION 变更后，旧答案视为失效并自动重新生成（解决错误答案永久固化问题）
 
 // 选择题答案超长时，仅保留正确选项字母（如 "A、B、C"），避免 OCS 端显示过长。
 // 仅当文本中出现「X. / X、/ X。」形式的选项字母时才压缩；论述题、判断题不含此类字母，不受影响。
@@ -83,6 +84,58 @@ export default {
       })
     }
 
+    // 管理端点（同样受上方 AUTH_KEY 保护，必须带正确 key 才能访问）
+    if (url.pathname.startsWith('/admin/')) {
+      if (!env.DB) {
+        return new Response(JSON.stringify({ error: 'DB not bound' }), {
+          status: 500,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        })
+      }
+      // 全量清理缓存
+      if (url.pathname === '/admin/clear-all') {
+        try {
+          const info = await env.DB.prepare('DELETE FROM answers').run()
+          return new Response(JSON.stringify({ ok: true, cleared: 'all', changes: info?.meta?.changes ?? null }), {
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          })
+        } catch (e) {
+          return new Response(JSON.stringify({ error: String(e) }), {
+            status: 500,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          })
+        }
+      }
+      // 单条清理：按 title + options 失效（options 可省略）
+      if (url.pathname === '/admin/clear') {
+        const t = (url.searchParams.get('title') || '').trim()
+        const o = (url.searchParams.get('options') || '').trim()
+        if (!t) {
+          return new Response(JSON.stringify({ error: 'missing title' }), {
+            status: 400,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          })
+        }
+        try {
+          const info = await env.DB.prepare(
+            'DELETE FROM answers WHERE title = ? AND options = ?'
+          ).bind(t, o).run()
+          return new Response(JSON.stringify({ ok: true, cleared: { title: t, options: o }, changes: info?.meta?.changes ?? null }), {
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          })
+        } catch (e) {
+          return new Response(JSON.stringify({ error: String(e) }), {
+            status: 500,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          })
+        }
+      }
+      return new Response(JSON.stringify({ error: 'unknown admin path' }), {
+        status: 404,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      })
+    }
+
     if (!title) {
       return new Response(JSON.stringify({ error: 'missing title' }), {
         status: 400,
@@ -98,11 +151,12 @@ export default {
       })
     }
 
-    // 1. 先查缓存
+    // 1. 先查缓存（带缓存版本，版本不符视为未命中，自动重新生成）
+    const cacheVersion = env.CACHE_VERSION || '1'
     try {
       const cached = await env.DB.prepare(
-        'SELECT answer FROM answers WHERE title = ? AND options = ?'
-      ).bind(title, options).first()
+        'SELECT answer FROM answers WHERE title = ? AND options = ? AND cache_version = ?'
+      ).bind(title, options, cacheVersion).first()
       if (cached) {
         return new Response(JSON.stringify({ answer: cached.answer, source: 'cache' }), {
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -114,6 +168,13 @@ export default {
     }
 
     // 2. 调用 AI API
+    // API_KEY 缺失检查（仅未命中缓存、即将调用 AI 时校验，避免误导性的 Bearer undefined 模糊 401）
+    if (!env.API_KEY) {
+      return new Response(JSON.stringify({ error: 'API_KEY_NOT_SET', hint: 'Worker 未配置 API_KEY。请执行 `wrangler secret put API_KEY` 或在 Dashboard Variables 中设置加密变量。' }), {
+        status: 500,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      })
+    }
     const apiBase = env.API_BASE || 'https://api.siliconflow.cn'
     const model = env.MODEL || 'deepseek-ai/DeepSeek-V3'
     const systemPrompt = env.SYSTEM_PROMPT || `你是一个答题助手，直接给出答案，不要解释。
@@ -139,6 +200,7 @@ export default {
     const callAI = async (systemContent) => {
       const r = await fetch(`${apiBase}/v1/chat/completions`, {
         method: 'POST',
+        signal: AbortSignal.timeout(25000),
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${env.API_KEY}`,
@@ -150,7 +212,7 @@ export default {
             { role: 'user', content: userContent },
           ],
           temperature: 0,
-          max_tokens: 2048,
+          max_tokens: 4096,
         }),
       })
       if (!r.ok) {
@@ -205,8 +267,8 @@ export default {
     if (answer) {
       try {
         await env.DB.prepare(
-          'INSERT OR IGNORE INTO answers (title, options, answer) VALUES (?, ?, ?)'
-        ).bind(title, options, answer).run()
+          'INSERT OR IGNORE INTO answers (title, options, answer, cache_version) VALUES (?, ?, ?, ?)'
+        ).bind(title, options, answer, cacheVersion).run()
       } catch (e) {
         console.error('Cache save error:', e)
       }

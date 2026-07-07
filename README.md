@@ -1,4 +1,4 @@
-# OCS AI Proxy
+# OCS Answer Bridge
 
 一个部署在 [Cloudflare Workers](https://workers.cloudflare.com/) 上的 OCS（Open College Study，[ocsjs/ocsjs](https://github.com/ocsjs/ocsjs)）网课答题代理。它在 OCS 客户端与任意 OpenAI 兼容的 AI API 之间充当中转层，并配套 D1 题库缓存、题型自适应格式化与网页端请求调试模板。
 
@@ -70,7 +70,7 @@ sequenceDiagram
 ## 目录结构
 
 ```
-ocs-ai-proxy/
+ocs-answer-bridge/
 ├── worker.js            # Cloudflare Worker 主程序（核心逻辑）
 ├── wrangler.toml        # Wrangler 部署配置（含 D1 绑定与明文变量）
 ├── schema.sql           # D1 建表语句
@@ -91,7 +91,12 @@ ocs-ai-proxy/
 | `MODEL` | 模型名称 | 否（`[vars]`） | `deepseek-ai/DeepSeek-V3` |
 | `AUTH_KEY` | 访问鉴权 Key（OCS 配置中作为参数传入） | ✅ 建议加密 | — |
 | `SYSTEM_PROMPT` | 系统提示词（控制答题格式） | 否 | 内置题型自适应提示词 |
+| `CACHE_VERSION` | 缓存版本号；变更后旧答案视为失效并自动重新生成（解决错误答案固化） | 否（`[vars]`） | `1` |
 | `DB` | D1 数据库绑定（由 `wrangler.toml` 声明） | — | — |
+
+> **运维端点（均受 `AUTH_KEY` 保护，需带正确 `key` 访问）**：
+> - `GET /admin/clear?title=<题目>&options=<选项>` — 失效单条缓存（该题目下次请求将重新生成）；
+> - `GET /admin/clear-all` — 清空全部缓存（谨慎使用）。
 
 ## ⚠️ 部署前提：自定义域名与大陆访问
 
@@ -102,6 +107,34 @@ ocs-ai-proxy/
 3. **绑定步骤**：Cloudflare Dashboard → 你的域名 → Workers Routes / Custom Domains → 添加路由（如 `https://<YOUR_DOMAIN>/*`）指向本 Worker；或在 `wrangler.toml` 中配置 `routes` 后执行 `wrangler deploy`。
 
 > 部署完成后，将 OCS 客户端配置中的 `Base URL` 填写为该自定义域名（见下方「OCS 客户端配置」中的 `<YOUR_DOMAIN>` 占位符）。
+
+## 快速开始
+
+满足「部署前提」后，约 5 分钟即可跑通：
+
+```bash
+# 1. 克隆并进入仓库
+git clone https://github.com/poying2018/ocs-answer-bridge.git
+cd ocs-answer-bridge
+
+# 2. 安装 wrangler 并登录
+npm install -g wrangler && wrangler login
+
+# 3. 创建 D1 数据库，把返回的 database_id 填入 wrangler.toml 的 database_id
+wrangler d1 create ocs
+
+# 4. 初始化表（含 cache_version 列）
+wrangler d1 execute ocs --remote --file=schema.sql
+
+# 5. 设置密钥与变量
+wrangler secret put API_KEY      # 上游 AI Key
+wrangler secret put AUTH_KEY     # 访问鉴权 Key（OCS 客户端传入）
+wrangler deploy                  # 部署（MODEL/API_BASE 已固化在 [vars]）
+
+# 6. 把 OCS 客户端的 Base URL 填为你的 Cloudflare 自定义域名，即可使用
+```
+
+不想用命令行？直接看下方「方式二 / 方式三」或使用 `deploy.ps1`（Windows）。
 
 ## 部署
 
@@ -156,6 +189,22 @@ wrangler deploy
 
 也可直接复制 `ocs-config.json` 使用。
 
+## 缓存管理
+
+D1 缓存命中即对相同题目零额度消耗，但一旦写入错误/不完整答案（如早期多选题不全），会一直返回旧答案。提供两种失效方式：
+
+1. **单条失效**：调用受 `AUTH_KEY` 保护的运维端点，让某题下次请求重新生成：
+   ```
+   GET https://<YOUR_DOMAIN>/admin/clear?key=<YOUR_AUTH_KEY>&title=<题目>&options=<选项>
+   ```
+2. **全量失效**：清空整张缓存表（谨慎）：
+   ```
+   GET https://<YOUR_DOMAIN>/admin/clear-all?key=<YOUR_AUTH_KEY>
+   ```
+3. **版本化全量失效（推荐）**：修改 `wrangler.toml` 中的 `CACHE_VERSION`（如 `'1'` → `'2'`）后重新 `wrangler deploy`。所有旧版本答案视为未命中，自动以新模型/新提示词重新生成，无需手动清理。适用于你调整了 `SYSTEM_PROMPT`、`MODEL` 或纠正了一批答案之后。
+
+> 运维端点返回 JSON，例如 `{ "ok": true, "cleared": { "title": "...", "options": "..." }, "changes": 1 }`。`changes` 为实际删除行数。
+
 ## 网页端请求模板
 
 浏览器直接打开 `request-template.html`：
@@ -177,6 +226,21 @@ Worker 接受以下 GET 参数：
 
 返回 `application/json`：`{ "answer": "...", "source": "cache" | "ai" }`。
 
+## 常见问题 / 故障排查
+
+| 现象 | 可能原因 | 处理 |
+|------|----------|------|
+| 返回 `401 { "error": "unauthorized" }` | 请求的 `key` 与 `AUTH_KEY` 不一致 | 检查 OCS 客户端配置的 `key` 与 Worker 的 `AUTH_KEY` 是否相同 |
+| 返回 `500 { "error": "API_KEY_NOT_SET" }` | 未配置 `API_KEY` | 执行 `wrangler secret put API_KEY` 或在 Dashboard 设置加密变量 |
+| 返回 `500 { "error": "DB_NOT_BOUND" }` | D1 未绑定 | 检查 `wrangler.toml` 的 `d1_databases` 绑定与 Dashboard → Worker → Settings → Bindings |
+| 上游返回 `401` / `402` | `API_KEY` 无效或额度不足 | 在 AI 服务商后台核对 Key 与余额 |
+| `/health` 显示 `db: "NOT_BOUND"` | 同上（D1 未绑定） | 同上 |
+| 大陆访问超时 / 无法连接 | 使用了默认 `*.workers.dev` 域名 | 必须将 Worker 绑定到托管在 Cloudflare 的自定义域名（见「部署前提」） |
+| 缓存一直返回旧的错误答案 | 旧答案已固化 | 用 `/admin/clear` 单条失效、或 bump `CACHE_VERSION` 全量失效（见「缓存管理」） |
+| OCS 客户端无响应 / 跨域报错 | 浏览器端调用被 CORS 拦截（正常不会） | Worker 已返回 `Access-Control-Allow-Origin: *`；检查 `Base URL` 是否写错导致请求未到达 Worker |
+
+> 调试技巧：先用 `request-template.html` 或 `curl` 直接请求 `https://<YOUR_DOMAIN>/health` 与 `/stats`，确认 Worker 与 D1 状态，再排查答题链路。
+
 ## worker.js
 
 > 仓库根目录 `worker.js` 的完整内容。点击下方折叠块展开，即可滚动阅读。
@@ -186,9 +250,10 @@ Worker 接受以下 GET 参数：
 <summary>展开 / 收起 worker.js 完整源码</summary>
 
 ```js
-// OCS AI Proxy — Cloudflare Worker
+// OCS Answer Bridge — Cloudflare Worker
 // 功能：接收 OCS 答题请求 → 先查 D1 题库缓存 → 命中则返回，未命中则调用 AI 并写入缓存
 // 部署：wrangler deploy（wrangler.toml 已声明 D1 绑定，部署时自动绑定）
+// 缓存版本：CACHE_VERSION 变更后，旧答案视为失效并自动重新生成（解决错误答案永久固化问题）
 
 // 选择题答案超长时，仅保留正确选项字母（如 "A、B、C"），避免 OCS 端显示过长。
 // 仅当文本中出现「X. / X、/ X。」形式的选项字母时才压缩；论述题、判断题不含此类字母，不受影响。
@@ -271,6 +336,58 @@ export default {
       })
     }
 
+    // 管理端点（同样受上方 AUTH_KEY 保护，必须带正确 key 才能访问）
+    if (url.pathname.startsWith('/admin/')) {
+      if (!env.DB) {
+        return new Response(JSON.stringify({ error: 'DB not bound' }), {
+          status: 500,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        })
+      }
+      // 全量清理缓存
+      if (url.pathname === '/admin/clear-all') {
+        try {
+          const info = await env.DB.prepare('DELETE FROM answers').run()
+          return new Response(JSON.stringify({ ok: true, cleared: 'all', changes: info?.meta?.changes ?? null }), {
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          })
+        } catch (e) {
+          return new Response(JSON.stringify({ error: String(e) }), {
+            status: 500,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          })
+        }
+      }
+      // 单条清理：按 title + options 失效（options 可省略）
+      if (url.pathname === '/admin/clear') {
+        const t = (url.searchParams.get('title') || '').trim()
+        const o = (url.searchParams.get('options') || '').trim()
+        if (!t) {
+          return new Response(JSON.stringify({ error: 'missing title' }), {
+            status: 400,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          })
+        }
+        try {
+          const info = await env.DB.prepare(
+            'DELETE FROM answers WHERE title = ? AND options = ?'
+          ).bind(t, o).run()
+          return new Response(JSON.stringify({ ok: true, cleared: { title: t, options: o }, changes: info?.meta?.changes ?? null }), {
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          })
+        } catch (e) {
+          return new Response(JSON.stringify({ error: String(e) }), {
+            status: 500,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          })
+        }
+      }
+      return new Response(JSON.stringify({ error: 'unknown admin path' }), {
+        status: 404,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      })
+    }
+
     if (!title) {
       return new Response(JSON.stringify({ error: 'missing title' }), {
         status: 400,
@@ -286,11 +403,12 @@ export default {
       })
     }
 
-    // 1. 先查缓存
+    // 1. 先查缓存（带缓存版本，版本不符视为未命中，自动重新生成）
+    const cacheVersion = env.CACHE_VERSION || '1'
     try {
       const cached = await env.DB.prepare(
-        'SELECT answer FROM answers WHERE title = ? AND options = ?'
-      ).bind(title, options).first()
+        'SELECT answer FROM answers WHERE title = ? AND options = ? AND cache_version = ?'
+      ).bind(title, options, cacheVersion).first()
       if (cached) {
         return new Response(JSON.stringify({ answer: cached.answer, source: 'cache' }), {
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -302,6 +420,13 @@ export default {
     }
 
     // 2. 调用 AI API
+    // API_KEY 缺失检查（仅未命中缓存、即将调用 AI 时校验，避免误导性的 Bearer undefined 模糊 401）
+    if (!env.API_KEY) {
+      return new Response(JSON.stringify({ error: 'API_KEY_NOT_SET', hint: 'Worker 未配置 API_KEY。请执行 `wrangler secret put API_KEY` 或在 Dashboard Variables 中设置加密变量。' }), {
+        status: 500,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      })
+    }
     const apiBase = env.API_BASE || 'https://api.siliconflow.cn'
     const model = env.MODEL || 'deepseek-ai/DeepSeek-V3'
     const systemPrompt = env.SYSTEM_PROMPT || `你是一个答题助手，直接给出答案，不要解释。
@@ -327,6 +452,7 @@ export default {
     const callAI = async (systemContent) => {
       const r = await fetch(`${apiBase}/v1/chat/completions`, {
         method: 'POST',
+        signal: AbortSignal.timeout(25000),
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${env.API_KEY}`,
@@ -338,7 +464,7 @@ export default {
             { role: 'user', content: userContent },
           ],
           temperature: 0,
-          max_tokens: 2048,
+          max_tokens: 4096,
         }),
       })
       if (!r.ok) {
@@ -393,8 +519,8 @@ export default {
     if (answer) {
       try {
         await env.DB.prepare(
-          'INSERT OR IGNORE INTO answers (title, options, answer) VALUES (?, ?, ?)'
-        ).bind(title, options, answer).run()
+          'INSERT OR IGNORE INTO answers (title, options, answer, cache_version) VALUES (?, ?, ?, ?)'
+        ).bind(title, options, answer, cacheVersion).run()
       } catch (e) {
         console.error('Cache save error:', e)
       }
