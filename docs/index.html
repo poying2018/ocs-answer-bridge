@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>worker.js — OCS AI Proxy</title>
+  <style>
+    :root {
+      --bg: #0d1117;
+      --panel: #161b22;
+      --border: #30363d;
+      --text: #c9d1d9;
+      --muted: #8b949e;
+      --accent: #58a6ff;
+      --code-bg: #0b0f14;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.6;
+      padding: 24px 16px 48px;
+    }
+    .wrap { max-width: 960px; margin: 0 auto; }
+    header { margin-bottom: 16px; }
+    h1 { font-size: 20px; margin: 0 0 4px; color: #fff; }
+    .sub { color: var(--muted); font-size: 13px; }
+    .bar {
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 12px; margin: 16px 0 8px;
+    }
+    .filename { font-size: 13px; color: var(--muted); }
+    .filename code { color: var(--accent); }
+    button.copy {
+      background: var(--accent); color: #0d1117; border: 0;
+      padding: 6px 14px; border-radius: 6px; font-size: 13px;
+      font-weight: 600; cursor: pointer; transition: opacity .15s;
+    }
+    button.copy:hover { opacity: .85; }
+    /* 固定高度滚动窗 —— 真正的滚动阅读式 */
+    pre.code {
+      margin: 0;
+      background: var(--code-bg);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 16px 18px;
+      max-height: 64vh;          /* 关键：限制高度 */
+      overflow: auto;            /* 关键：超出即滚动 */
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+      font-size: 13px;
+      line-height: 1.55;
+      tab-size: 2;
+      white-space: pre;
+    }
+    pre.code code { color: var(--text); }
+    /* 轻量语法高亮 */
+    .tok-com { color: #6a737d; font-style: italic; }
+    .tok-kw  { color: #ff7b72; }
+    .tok-str { color: #a5d6ff; }
+    .tok-fn  { color: #d2a8ff; }
+    .tok-num { color: #79c0ff; }
+    .hint { color: var(--muted); font-size: 12px; margin-top: 10px; }
+    .hint a { color: var(--accent); text-decoration: none; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <h1>OCS AI Proxy — worker.js 完整源码</h1>
+      <div class="sub">滚动阅读式代码视图 · 核心功能源自 <a href="https://github.com/uucz/ocs-ai-proxy/blob/main/README.md" style="color:var(--accent)">uucz/ocs-ai-proxy</a></div>
+    </header>
+
+    <div class="bar">
+      <div class="filename">文件：<code>worker.js</code>（Cloudflare Worker 入口）</div>
+      <button class="copy" id="copyBtn">复制代码</button>
+    </div>
+
+    <pre class="code"><code id="src">加载中…</code></pre>
+
+    <p class="hint">
+      此页由 GitHub Pages 托管。无法滚动时可拖动右侧滚动条；点击「复制代码」获取纯文本。
+      返回 <a href="https://github.com/poying2018/ocs-ai-proxy">项目仓库</a>。
+    </p>
+  </div>
+
+  <script>
+    const srcEl = document.getElementById('src');
+    const copyBtn = document.getElementById('copyBtn');
+
+    async function load() {
+      try {
+        const res = await fetch('./worker.js', { cache: 'no-store' });
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        const text = await res.text();
+        srcEl.innerHTML = highlight(text);
+        copyBtn.onclick = () => {
+          navigator.clipboard.writeText(text).then(() => {
+            copyBtn.textContent = '已复制 ✓';
+            setTimeout(() => (copyBtn.textContent = '复制代码'), 1500);
+          });
+        };
+      } catch (e) {
+        srcEl.textContent = '加载失败：' + e.message;
+      }
+    }
+
+    // 轻量语法高亮（仅用于展示）
+    function escapeHtml(s) {
+      return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
+    function highlight(code) {
+      let s = escapeHtml(code);
+      // 注释
+      s = s.replace(/(\/\/.*)/g, '<span class="tok-com">$1</span>');
+      // 字符串（模板/单双引号）
+      s = s.replace(/(&#39;[^&]*?&#39;|`[^`]*?`|&quot;[^&]*?&quot;)/g, '<span class="tok-str">$1</span>');
+      // 关键字
+      s = s.replace(/\b(export|default|const|let|var|function|async|await|return|if|else|for|of|new|try|catch|throw|null|true|false)\b/g, '<span class="tok-kw">$1</span>');
+      // 数字
+      s = s.replace(/\b(\d+)\b/g, '<span class="tok-num">$1</span>');
+      return s;
+    }
+
+    load();
+  </script>
+</body>
+</html>
