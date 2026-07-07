@@ -36,6 +36,37 @@ Cloudflare Worker (worker.js)
 OCS 客户端解析 res.answer
 ```
 
+请求时序图（缓存命中 / 未命中两条分支）：
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant OCS as OCS 客户端 (AnswererWrapper)
+    participant W as Cloudflare Worker
+    participant D1 as D1 题库缓存
+    participant AI as 上游 AI API
+
+    OCS->>W: GET /?key=&title=&options=
+    W->>W: 鉴权（AUTH_KEY 校验）
+    W->>D1: SELECT answer WHERE title+options
+    alt 缓存命中
+        D1-->>W: 返回 answer
+        W-->>OCS: { answer, source:"cache" }
+    else 缓存未命中
+        W->>AI: chat/completions（含题型自适应提示词）
+        AI-->>W: 答案文本
+        opt 题目含多选信号词且首答仅 1 项
+            W->>AI: 重试（强调列出全部正确选项）
+            AI-->>W: 完整答案
+        end
+        W->>W: 超长答案压缩（仅保留选项字母）
+        W->>D1: INSERT OR IGNORE 答案
+        W-->>OCS: { answer, source:"ai" }
+    end
+```
+
+> 说明：缓存命中分支完全不调用上游 AI，因此对同一题目的重复请求零额度消耗；只有未命中时才会消耗一次 `AI API` 调用并写回 D1。
+
 ## 目录结构
 
 ```
@@ -46,6 +77,7 @@ ocs-ai-proxy/
 ├── deploy.ps1           # 一键部署脚本（PowerShell，需 Windows + wrangler）
 ├── request-template.html# 网页端请求调试模板（浏览器直接打开）
 ├── ocs-config.json      # OCS 客户端 AnswererWrapper 配置示例
+├── LICENSE               # MIT 许可（衍生自 uucz/ocs-ai-proxy）
 ├── .gitignore
 └── README.md
 ```
@@ -477,4 +509,4 @@ export default {
 
 ## License
 
-[MIT](https://github.com/uucz/ocs-ai-proxy/blob/main/README.md) — 本项目沿用原项目 MIT 许可。
+[MIT](./LICENSE) — 本项目以 MIT 许可发布，核心中转思路衍生自 [uucz/ocs-ai-proxy](https://github.com/uucz/ocs-ai-proxy/blob/main/README.md)（亦为 MIT 许可）。详见仓库根目录 [`LICENSE`](./LICENSE) 文件。
