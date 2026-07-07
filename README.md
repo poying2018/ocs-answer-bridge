@@ -93,7 +93,15 @@ ocs-ai-proxy/
 | `SYSTEM_PROMPT` | 系统提示词（控制答题格式） | 否 | 内置题型自适应提示词 |
 | `DB` | D1 数据库绑定（由 `wrangler.toml` 声明） | — | — |
 
-> 自定义域名需在 Cloudflare Dashboard 手动绑定到本 Worker（中国用户无法访问 `*.workers.dev`）。
+## ⚠️ 部署前提：自定义域名与大陆访问
+
+本项目以 Cloudflare Workers 为载体，**必须由你自己提供一个已托管在 Cloudflare 的自定义域名**才能稳定对外提供服务：
+
+1. **Cloudflare 托管域名是前提**：Worker 默认分配的 `*.workers.dev` 子域名仅作开发调试用途。生产环境（尤其是 OCS 客户端长期调用）需将自有域名的 DNS（NS）托管到 Cloudflare，再通过 **Custom Domain** 或 **Worker Routes** 绑定到本 Worker。
+2. **大陆无法直连默认域名**：`*.workers.dev` 在中国大陆网络环境下通常不可直连。只有绑定到托管在 Cloudflare 的自定义域名（如 `<YOUR_DOMAIN>`），才能在中国大陆正常访问。
+3. **绑定步骤**：Cloudflare Dashboard → 你的域名 → Workers Routes / Custom Domains → 添加路由（如 `https://<YOUR_DOMAIN>/*`）指向本 Worker；或在 `wrangler.toml` 中配置 `routes` 后执行 `wrangler deploy`。
+
+> 部署完成后，将 OCS 客户端配置中的 `Base URL` 填写为该自定义域名（见下方「OCS 客户端配置」中的 `<YOUR_DOMAIN>` 占位符）。
 
 ## 部署
 
