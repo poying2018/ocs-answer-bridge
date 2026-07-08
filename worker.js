@@ -2,6 +2,7 @@
 // 功能：接收 OCS 答题请求 → 先查 D1 题库缓存 → 命中则返回，未命中则调用 AI 并写入缓存
 // 部署：wrangler deploy（wrangler.toml 已声明 D1 绑定，部署时自动绑定）
 // 缓存与模型解耦：答案按 (title, options) 命中，与所用模型/提示词无关；换模型不失效。纠正某题用 /admin/clear 单条失效。
+// 联网搜索：环境变量 WEB_SEARCH === 'true' 时默认开启；或在请求中加 ?search=1 临时开启单次。启用时向上游显式传入 tools 块激活 web_search 插件。
 
 // 选择题答案超长时，仅保留正确选项字母（如 "A、B、C"），避免 OCS 端显示过长。
 // 仅当文本中出现「X. / X、/ X。」形式的选项字母时才压缩；论述题、判断题不含此类字母，不受影响。
@@ -75,6 +76,9 @@ export default {
     const key = url.searchParams.get('key') || ''
     const title = (url.searchParams.get('title') || '').trim()
     const options = (url.searchParams.get('options') || '').trim()
+
+    // 联网搜索开关：环境变量 WEB_SEARCH === 'true' 默认开启；请求加 ?search=1 可临时开启单次
+    const enableSearch = env.WEB_SEARCH === 'true' || url.searchParams.get('search') === '1'
 
     // 鉴权
     if (env.AUTH_KEY && key !== env.AUTH_KEY) {
@@ -204,15 +208,30 @@ export default {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${env.API_KEY}`,
         },
-        body: JSON.stringify({
-          model,
-          messages: [
-            { role: 'system', content: systemContent },
-            { role: 'user', content: userContent },
-          ],
-          temperature: 0,
-          max_tokens: 4096,
-        }),
+        body: JSON.stringify(
+          (() => {
+            const b = {
+              model,
+              messages: [
+                { role: 'system', content: systemContent },
+                { role: 'user', content: userContent },
+              ],
+              temperature: 0,
+              max_tokens: 4096,
+            }
+            // 联网搜索（用户可配置）：显式传入 tools 块激活 mimo 后端 web_search 插件
+            if (enableSearch) {
+              b.tools = [{
+                type: 'web_search',
+                search_engine: 'bing',
+                max_keyword: 3,
+                force_search: false,
+                limit: 1,
+              }]
+            }
+            return b
+          })()
+        ),
       })
       if (!r.ok) {
         const err = await r.text()

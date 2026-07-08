@@ -92,7 +92,13 @@ ocs-answer-bridge/
 | `MODEL` | 模型名称 | 否（`[vars]`） | `deepseek-ai/DeepSeek-V3` |
 | `AUTH_KEY` | 访问鉴权 Key（OCS 配置中作为参数传入） | ✅ 建议加密 | — |
 | `SYSTEM_PROMPT` | 系统提示词（控制答题格式） | 否 | 内置题型自适应提示词 |
+| `WEB_SEARCH` | 联网搜索总开关：`'true'` 默认开启，`'false'`（默认）关闭。任意请求追加 `?search=1` 可临时开启单次 | 否（`[vars]`） | `false` |
 | `DB` | D1 数据库绑定（由 `wrangler.toml` 声明） | — | — |
+
+> **联网搜索（WEB_SEARCH）**：开启后，Worker 会向上游 `chat/completions` 显式传入 `tools:[{type:"web_search",...}]` 块激活后端联网搜索插件，适用于需要实时/最新信息的题目。两种开启方式：
+> - 全局默认开启：把 `wrangler.toml` 中 `WEB_SEARCH` 设为 `"true"`，或 `wrangler vars set WEB_SEARCH true`；
+> - 单次临时开启：请求 URL 追加 `?search=1`（优先级高于环境变量，可临时覆盖关闭状态）。
+> 注意：联网搜索依赖上游模型是否支持该插件（如 mimo 系列）；若上游忽略该参数，则退化为普通答题。建议配合模型版本（如 `mimo-v2.5-pro`）使用以获得最佳效果。
 
 > **运维端点（均受 `AUTH_KEY` 保护，需带正确 `key` 访问）**：
 > - `GET /admin/clear?title=<题目>&options=<选项>` — 失效单条缓存（该题目下次请求将重新生成）；

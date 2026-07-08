@@ -13,6 +13,8 @@ database_id = "<YOUR_D1_DATABASE_ID>"
 [vars]
 MODEL = "mimo-v2.5"
 API_BASE = "https://api.xiaomimimo.com"
+# 联网搜索总开关：'true' 默认开启；'false' 关闭（默认）。任意请求加 ?search=1 可临时开启单次。
+WEB_SEARCH = "false"
 
 # 注：自定义域名需在 Cloudflare Dashboard 手动绑定到本 Worker
 # （Workers & Pages → ocs-answer-bridge → Settings → Domains & Routes → Add → Custom domain）
