@@ -1,7 +1,7 @@
 // OCS Answer Bridge — Cloudflare Worker
 // 功能：接收 OCS 答题请求 → 先查 D1 题库缓存 → 命中则返回，未命中则调用 AI 并写入缓存
 // 部署：wrangler deploy（wrangler.toml 已声明 D1 绑定，部署时自动绑定）
-// 缓存版本：CACHE_VERSION 变更后，旧答案视为失效并自动重新生成（解决错误答案永久固化问题）
+// 缓存与模型解耦：答案按 (title, options) 命中，与所用模型/提示词无关；换模型不失效。纠正某题用 /admin/clear 单条失效。
 
 // 选择题答案超长时，仅保留正确选项字母（如 "A、B、C"），避免 OCS 端显示过长。
 // 仅当文本中出现「X. / X、/ X。」形式的选项字母时才压缩；论述题、判断题不含此类字母，不受影响。
@@ -151,12 +151,11 @@ export default {
       })
     }
 
-    // 1. 先查缓存（带缓存版本，版本不符视为未命中，自动重新生成）
-    const cacheVersion = env.CACHE_VERSION || '1'
+    // 1. 先查缓存（按题目+选项命中；答案与模型无关，换模型不失效）
     try {
       const cached = await env.DB.prepare(
-        'SELECT answer FROM answers WHERE title = ? AND options = ? AND cache_version = ?'
-      ).bind(title, options, cacheVersion).first()
+        'SELECT answer FROM answers WHERE title = ? AND options = ?'
+      ).bind(title, options).first()
       if (cached) {
         return new Response(JSON.stringify({ answer: cached.answer, source: 'cache' }), {
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -263,12 +262,12 @@ export default {
       if (compressed) answer = compressed
     }
 
-    // 3. 写入缓存
+    // 3. 写入缓存（不绑版本，答案与模型无关，长期复用）
     if (answer) {
       try {
         await env.DB.prepare(
-          'INSERT OR IGNORE INTO answers (title, options, answer, cache_version) VALUES (?, ?, ?, ?)'
-        ).bind(title, options, answer, cacheVersion).run()
+          'INSERT OR IGNORE INTO answers (title, options, answer) VALUES (?, ?, ?)'
+        ).bind(title, options, answer).run()
       } catch (e) {
         console.error('Cache save error:', e)
       }

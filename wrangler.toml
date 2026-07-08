@@ -13,9 +13,6 @@ database_id = "<YOUR_D1_DATABASE_ID>"
 [vars]
 MODEL = "mimo-v2.5"
 API_BASE = "https://api.xiaomimimo.com"
-# 缓存版本：改为 "2" 即触发「全量缓存失效」（配合 UNIQUE(title, options, cache_version)）。
-# 旧版本答案视为未命中、自动以当前模型/提示词重新生成。未来需要再次失效时递增即可。
-CACHE_VERSION = "2"
 
 # 注：自定义域名需在 Cloudflare Dashboard 手动绑定到本 Worker
 # （Workers & Pages → ocs-answer-bridge → Settings → Domains & Routes → Add → Custom domain）

@@ -24,10 +24,8 @@ if ($LASTEXITCODE -ne 0) {
     Write-Warning "建表失败或已存在，继续执行迁移..."
 }
 
-# 2. 升级缓存版本机制：把唯一约束改为 UNIQUE(title, options, cache_version)
-#    （原 UNIQUE(title, options) 不改的话，bump CACHE_VERSION 会导致缓存被打挂）
-#    迁移脚本幂等、安全重建，可重复执行。
-Write-Host "[2/5] 迁移：升级缓存版本机制（migrations/001_cache_version.sql）..." -ForegroundColor Yellow
+# 2. 确保缓存表含 cache_version 列且唯一约束正确（migrations/001 幂等、安全重建，可重复执行）
+Write-Host "[2/5] 迁移：确保表结构正确（migrations/001_cache_version.sql）..." -ForegroundColor Yellow
 wrangler d1 execute ocs --remote --file=migrations/001_cache_version.sql
 if ($LASTEXITCODE -ne 0) { throw "缓存版本迁移失败" }
 
@@ -41,18 +39,10 @@ Write-Host "[4/5] 设置 API_KEY..." -ForegroundColor Yellow
 $ApiKey | wrangler secret put API_KEY
 if ($LASTEXITCODE -ne 0) { throw "设置 API_KEY 失败" }
 
-# 5. 部署（CACHE_VERSION 已在 [vars] 中，会随 deploy 一并生效）
+# 5. 部署 Worker（缓存与模型解耦，部署不会清空缓存）
 Write-Host "[5/5] 部署 Worker..." -ForegroundColor Yellow
 wrangler deploy
 if ($LASTEXITCODE -ne 0) { throw "部署失败" }
-
-# 5b. 旧版本缓存清理：CACHE_VERSION 已 bump 到 [vars] 中的值，删除所有旧版本孤儿行
-$CACHE_VER = (Select-String -Path wrangler.toml -Pattern 'CACHE_VERSION\s*=\s*"([^"]+)"' | ForEach-Object { $_.Matches.Groups[1].Value })
-if ($CACHE_VER) {
-    Write-Host "[5/5] 清理旧版本缓存行（cache_version <> '$CACHE_VER'）..." -ForegroundColor Yellow
-    wrangler d1 execute ocs --remote --command="DELETE FROM answers WHERE cache_version <> '$CACHE_VER'" 2>$null
-    if ($LASTEXITCODE -ne 0) { Write-Warning "旧版本清理跳过（可能无数据），不影响运行" }
-}
 
 Write-Host "========================================" -ForegroundColor Green
 Write-Host " 部署完成!" -ForegroundColor Green

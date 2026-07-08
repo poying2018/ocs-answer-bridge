@@ -26,7 +26,7 @@ OCS 客户端 (AnswererWrapper)
    ▼
 Cloudflare Worker (worker.js)
    ├─ 鉴权 (AUTH_KEY)
-   ├─ 查 D1 缓存 (title + options + cache_version 唯一键)
+   ├─ 查 D1 缓存 (title + options 唯一键)
    │     ├─ 命中 → 直接返回 answer, source:"cache"
    │     └─ 未命中 → 调用 AI API
    │            ├─ 多选兜底重试（如需）
@@ -48,7 +48,7 @@ sequenceDiagram
 
     OCS->>W: GET /?key=&title=&options=
     W->>W: 鉴权（AUTH_KEY 校验）
-    W->>D1: SELECT answer WHERE title+options+cache_version
+    W->>D1: SELECT answer WHERE title+options
     alt 缓存命中
         D1-->>W: 返回 answer
         W-->>OCS: { answer, source:"cache" }
@@ -60,7 +60,7 @@ sequenceDiagram
             AI-->>W: 完整答案
         end
         W->>W: 超长答案压缩（仅保留选项字母）
-        W->>D1: INSERT OR IGNORE (含 cache_version)
+        W->>D1: INSERT OR IGNORE (title, options, answer)
         W-->>OCS: { answer, source:"ai" }
     end
 ```
@@ -73,8 +73,8 @@ sequenceDiagram
 ocs-answer-bridge/
 ├── worker.js            # Cloudflare Worker 主程序（核心逻辑）
 ├── wrangler.toml        # Wrangler 部署配置（含 D1 绑定与明文变量）
-├── schema.sql           # D1 建表语句（UNIQUE 含 cache_version）
-├── migrations/001_cache_version.sql # 存量库升级缓存版本机制的迁移脚本（建新表→迁移→改名）
+├── schema.sql           # D1 建表语句（缓存按 title+options 唯一）
+├── migrations/001_cache_version.sql # 存量库迁移：确保 answers 含 cache_version 列与正确唯一约束（幂等）
 ├── deploy.ps1           # 一键部署脚本（PowerShell，需 Windows + wrangler）
 ├── request-template.html# 网页端请求调试模板（浏览器直接打开）
 ├── ocs-config.json      # OCS 客户端 AnswererWrapper 配置示例
@@ -92,7 +92,6 @@ ocs-answer-bridge/
 | `MODEL` | 模型名称 | 否（`[vars]`） | `deepseek-ai/DeepSeek-V3` |
 | `AUTH_KEY` | 访问鉴权 Key（OCS 配置中作为参数传入） | ✅ 建议加密 | — |
 | `SYSTEM_PROMPT` | 系统提示词（控制答题格式） | 否 | 内置题型自适应提示词 |
-| `CACHE_VERSION` | 缓存版本号；变更后旧答案视为失效并自动重新生成（解决错误答案固化） | 否（`[vars]`） | `1` |
 | `DB` | D1 数据库绑定（由 `wrangler.toml` 声明） | — | — |
 
 > **运维端点（均受 `AUTH_KEY` 保护，需带正确 `key` 访问）**：
@@ -126,7 +125,7 @@ wrangler d1 create ocs
 
 # 4. 初始化表（全新库）
 wrangler d1 execute ocs --remote --file=schema.sql
-# 4b. 升级缓存版本机制（存量库必须：把唯一约束改为含 cache_version，否则 bump CACHE_VERSION 会打挂缓存）
+# 4b. 确保表含 cache_version 列且唯一约束正确（存量库幂等迁移，可重复执行）
 wrangler d1 execute ocs --remote --file=migrations/001_cache_version.sql
 
 # 5. 设置密钥与变量
@@ -195,22 +194,18 @@ wrangler deploy
 
 ## 缓存管理
 
-D1 缓存命中即对相同题目零额度消耗，但一旦写入错误/不完整答案（如早期多选题不全），会一直返回旧答案。提供两种失效方式：
+D1 缓存命中即对相同题目零额度消耗。**缓存与模型/提示词解耦**：答案按 `(title, options)` 命中，与当前所用模型、`SYSTEM_PROMPT` 无关——因此更换模型或调整提示词**不会**清空缓存，已缓存的题目答案会照常复用。
 
-1. **单条失效**：调用受 `AUTH_KEY` 保护的运维端点，让某题下次请求重新生成：
+若某题缓存了错误/不完整答案（如早期多选题不全），用以下方式让其重新生成：
+
+1. **单条失效**（推荐，精准）：调用受 `AUTH_KEY` 保护的运维端点，只让这一题下次请求回源 AI：
    ```
    GET https://<YOUR_DOMAIN>/admin/clear?key=<YOUR_AUTH_KEY>&title=<题目>&options=<选项>
    ```
-2. **全量失效**：清空整张缓存表（谨慎）：
+2. **全量清空**（谨慎）：清空整张缓存表，所有题目下次请求都会重新生成：
    ```
    GET https://<YOUR_DOMAIN>/admin/clear-all?key=<YOUR_AUTH_KEY>
    ```
-3. **版本化全量失效（推荐）**：修改 `wrangler.toml` 中的 `CACHE_VERSION`（如 `'1'` → `'2'`）后重新 `wrangler deploy`。所有旧版本答案视为未命中，自动以新模型/新提示词重新生成，无需手动清理。适用于你调整了 `SYSTEM_PROMPT`、`MODEL` 或纠正了一批答案之后。
-
-> ⚠️ **版本化失效的前提（关键）**：`schema.sql` 的唯一约束必须是 `UNIQUE(title, options, cache_version)`。
-> 若你的存量库仍是旧约束 `UNIQUE(title, options)`，务必先执行 `migrations/001_cache_version.sql` 升级，
-> 否则仅改 `CACHE_VERSION` 会因唯一键冲突导致 `INSERT OR IGNORE` 被**静默忽略**、该题缓存永久失效并反复回源 AI。
-> 本仓库已内置该迁移，`deploy.ps1` / `deploy-online.sh` 会在部署前自动执行；手动部署时请勿遗漏第 4b / 第 3 步的迁移命令。
 
 > 运维端点返回 JSON，例如 `{ "ok": true, "cleared": { "title": "...", "options": "..." }, "changes": 1 }`。`changes` 为实际删除行数。
 
@@ -245,7 +240,7 @@ Worker 接受以下 GET 参数：
 | 上游返回 `401` / `402` | `API_KEY` 无效或额度不足 | 在 AI 服务商后台核对 Key 与余额 |
 | `/health` 显示 `db: "NOT_BOUND"` | 同上（D1 未绑定） | 同上 |
 | 大陆访问超时 / 无法连接 | 使用了默认 `*.workers.dev` 域名 | 必须将 Worker 绑定到托管在 Cloudflare 的自定义域名（见「部署前提」） |
-| 缓存一直返回旧的错误答案 | 旧答案已固化 | 用 `/admin/clear` 单条失效、或 bump `CACHE_VERSION` 全量失效（见「缓存管理」） |
+| 缓存一直返回旧的错误答案 | 旧答案已固化 | 用 `/admin/clear` 单条失效让该题重新生成（见「缓存管理」）；必要时用 `/admin/clear-all` 全量清空 |
 | OCS 客户端无响应 / 跨域报错 | 浏览器端调用被 CORS 拦截（正常不会） | Worker 已返回 `Access-Control-Allow-Origin: *`；检查 `Base URL` 是否写错导致请求未到达 Worker |
 
 > 调试技巧：先用 `request-template.html` 或 `curl` 直接请求 `https://<YOUR_DOMAIN>/health` 与 `/stats`，确认 Worker 与 D1 状态，再排查答题链路。
@@ -262,7 +257,7 @@ Worker 接受以下 GET 参数：
 // OCS Answer Bridge — Cloudflare Worker
 // 功能：接收 OCS 答题请求 → 先查 D1 题库缓存 → 命中则返回，未命中则调用 AI 并写入缓存
 // 部署：wrangler deploy（wrangler.toml 已声明 D1 绑定，部署时自动绑定）
-// 缓存版本：CACHE_VERSION 变更后，旧答案视为失效并自动重新生成（解决错误答案永久固化问题）
+// 缓存与模型解耦：答案按 (title, options) 命中，与所用模型/提示词无关；换模型不失效。纠正某题用 /admin/clear 单条失效。
 
 // 选择题答案超长时，仅保留正确选项字母（如 "A、B、C"），避免 OCS 端显示过长。
 // 仅当文本中出现「X. / X、/ X。」形式的选项字母时才压缩；论述题、判断题不含此类字母，不受影响。
@@ -412,12 +407,11 @@ export default {
       })
     }
 
-    // 1. 先查缓存（带缓存版本，版本不符视为未命中，自动重新生成）
-    const cacheVersion = env.CACHE_VERSION || '1'
+    // 1. 先查缓存（按题目+选项命中；答案与模型无关，换模型不失效）
     try {
       const cached = await env.DB.prepare(
-        'SELECT answer FROM answers WHERE title = ? AND options = ? AND cache_version = ?'
-      ).bind(title, options, cacheVersion).first()
+        'SELECT answer FROM answers WHERE title = ? AND options = ?'
+      ).bind(title, options).first()
       if (cached) {
         return new Response(JSON.stringify({ answer: cached.answer, source: 'cache' }), {
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -524,12 +518,12 @@ export default {
       if (compressed) answer = compressed
     }
 
-    // 3. 写入缓存
+    // 3. 写入缓存（不绑版本，答案与模型无关，长期复用）
     if (answer) {
       try {
         await env.DB.prepare(
-          'INSERT OR IGNORE INTO answers (title, options, answer, cache_version) VALUES (?, ?, ?, ?)'
-        ).bind(title, options, answer, cacheVersion).run()
+          'INSERT OR IGNORE INTO answers (title, options, answer) VALUES (?, ?, ?)'
+        ).bind(title, options, answer).run()
       } catch (e) {
         console.error('Cache save error:', e)
       }
