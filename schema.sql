@@ -5,5 +5,5 @@ CREATE TABLE IF NOT EXISTS answers (
   answer TEXT NOT NULL,
   cache_version TEXT NOT NULL DEFAULT '1',
   created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-  UNIQUE(title, options)
+  UNIQUE(title, options, cache_version)
 );
